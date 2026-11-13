@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+/*
+  Tokens do Store Shots (referência: layout HTML — tons slate, destaque azul).
+  Movimento: ease-out forte para entradas/feedback, sempre < 300 ms.
+*/
+@theme {
+  --font-sans: var(--font-inter), "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --color-canvas: #edf2f9;
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-ink: #ffffff; /* texto sobre fundos de destaque: SEMPRE branco */
+  --color-toast: #0f172a;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+:root {
+  color-scheme: light;
+}
+
+/* `dark:` segue o tema escolhido (data-theme no <html>). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+  Modo escuro: a paleta é redefinida (slate invertido, superfícies escuras e
+  tons de estado suaves). Só a interface muda; os slides são desenhados no
+  Canvas com as cores do próprio design.
+*/
+[data-theme="dark"] {
+  color-scheme: dark;
+  /* Cinzas neutros (sem tom azulado) e preto; o azul fica só como destaque. */
+  --color-white: #18181b;
+  --color-canvas: #0b0b0c;
+  --color-slate-50: #1f1f22;
+  --color-slate-100: #26262a;
+  --color-slate-200: #2f2f34;
+  --color-slate-300: #3f3f46;
+  --color-slate-400: #71717a;
+  --color-slate-500: #92929b;
+  --color-slate-600: #b0b0b8;
+  --color-slate-700: #cacad1;
+  --color-slate-800: #e2e2e7;
+  --color-slate-900: #f4f4f5;
+  --color-brand-50: #232329;
+  --color-brand-100: #2b2b33;
+  --color-brand-200: #3a3a45;
+  --color-brand-300: #4f5568;
+  --color-brand-400: #60a5fa;
+  --color-brand-600: #3b82f6;
+  --color-brand-700: #93b4ff;
+  --color-blue-900: #dbe4ff;
+  --color-emerald-50: #13231d;
+  --color-emerald-200: #1f4a3a;
+  --color-emerald-500: #34d399;
+  --color-emerald-600: #34d399;
+  --color-emerald-700: #6ee7b7;
+  --color-amber-50: #29220f;
+  --color-amber-200: #574416;
+  --color-amber-600: #fbbf24;
+  --color-amber-700: #fcd34d;
+  --color-amber-800: #fde68a;
+  --color-red-50: #2e1416;
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+  --color-purple-50: #241a30;
+  --color-purple-100: #35264a;
+  --color-purple-600: #c084fc;
+  --color-toast: #27272a;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-canvas);
+  color: var(--color-slate-800);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Barras de rolagem finas (referência HTML) */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.thin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Slider no estilo da referência */
+input[type="range"].range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 16px;
+  width: 100%;
+  cursor: pointer;
+  --pct: 50%;
+}
+input[type="range"].range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(to right, var(--color-brand-600) var(--pct), #cbd5e1 var(--pct));
+}
+input[type="range"].range::-moz-range-track {
+  height: 3px;
+  border-radius: 9999px;
+  background: #cbd5e1;
+}
+input[type="range"].range::-moz-range-progress {
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--color-brand-600);
+}
+input[type="range"].range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 13px;
+  width: 13px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #334155;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 140ms ease;
+}
+input[type="range"].range::-moz-range-thumb {
+  height: 13px;
+  width: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: #334155;
+}
+@media (hover: hover) and (pointer: fine) {
+  input[type="range"].range:hover::-webkit-slider-thumb {
+    transform: scale(1.18);
+    background: var(--color-brand-600);
+  }
+}
+input[type="range"].range:active::-webkit-slider-thumb {
+  transform: scale(1.1);
+  background: var(--color-brand-600);
+}
+input[type="range"].range:focus-visible {
+  outline: 2px solid var(--color-brand-300);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Elementos pressionáveis respondem ao clique */
+.press {
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+}
+.press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Entrada de elementos novos sem JS */
+.enter {
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
