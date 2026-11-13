@@ -131,3 +131,20 @@ test("duplicar slide gera ids novos e mantém o conteúdo", () => {
   assert.equal(c.layers.length, s.layers.length);
   assert.ok(c.layers.every((l, i) => l.id !== s.layers[i].id && l.type === s.layers[i].type));
 });
+
+test("recurso gráfico não começa mais com ícone + aparelhos", () => {
+  assert.notEqual(defaultDesign("feature").template, "feature-icon-devices");
+  assert.ok(templatesFor("feature").length >= 6);
+});
+
+test("panorama: cada círculo é dividido entre dois slides vizinhos, na mesma altura", () => {
+  const t = TEMPLATES.find((x) => x.id === "panorama")!;
+  const slides = t.build("phone").slides;
+  for (let k = 0; k < slides.length - 1; k++) {
+    const right = slides[k].layers.find((l) => l.type === "shape" && l.x === 1)!;
+    const left = slides[k + 1].layers.find((l) => l.type === "shape" && l.x === 0)!;
+    assert.ok(right && left, `divisa ${k}→${k + 1} sem círculo`);
+    assert.equal(right.y, left.y);
+    assert.equal(right.w, left.w);
+  }
+});
