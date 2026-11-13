@@ -4,18 +4,23 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
+  ClipboardPaste,
+  Copy,
   Download,
   FileArchive,
   FolderDown,
+  GripVertical,
   Plus,
   Ratio,
   Redo2,
+  Trash2,
   Undo2,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { buildExport, canSaveToFolder, downloadZip, pickFolder, writeToFolder } from "@/lib/export";
 import {
   CATEGORY_LABEL,
+  clamp,
   exportSizeOf,
   MAX_SLIDES,
   missingShots,
@@ -254,6 +259,7 @@ function CategoryView({ category }: { category: Category }) {
       ref={ref}
       onScroll={(e) => (scrollMemory[key] = e.currentTarget.scrollTop)}
       onPointerDown={(e) => e.target === e.currentTarget && useApp.getState().selectLayer(null)}
+      data-scroll-area
       className="thin-scroll h-full overflow-y-auto px-6 pt-6 pb-12"
     >
       <div className="mx-auto max-w-[1480px] space-y-10">
@@ -266,8 +272,9 @@ function CategoryView({ category }: { category: Category }) {
         )}
         {enabled.length > 0 && (
           <p className="text-center text-[11px] leading-relaxed text-slate-400">
-            Clique para selecionar · arraste para mover · alças para redimensionar e girar · Alt + arrastar ajusta o print dentro do
-            aparelho · Ctrl + roda = zoom no print · solte imagens no slide · Ctrl+Z desfaz · Delete apaga · Ctrl+D duplica
+            Clique para selecionar · clique duplo no texto para editar · arraste o &ldquo;Slide N&rdquo; (ou segure o fundo do slide) para
+            mudar a ordem · Ctrl+C / Ctrl+V copia uma camada para outro slide · Alt + arrastar ajusta o print · Ctrl + roda = zoom no
+            print · Delete apaga · Ctrl+D duplica · Ctrl+Z desfaz
           </p>
         )}
       </div>
@@ -277,15 +284,29 @@ function CategoryView({ category }: { category: Category }) {
 
 function Section({ preset, order, first }: { preset: ExportPreset; order: number; first: boolean }) {
   const count = useApp((s) => cur(s)?.design[preset.category].slides.length ?? 0);
+  const ids = useApp((s) => cur(s)?.design[preset.category].slides.map((x) => x.id).join() ?? "");
   const size = useApp((s) => (cur(s) ? exportSizeOf(cur(s)!, preset) : preset.sizes[0]));
+  const slideDrag = useApp((s) => s.slideDrag);
   const addSlide = useApp((s) => s.addSlide);
+  const grid = useRef<HTMLDivElement>(null);
   const feature = preset.category === "feature";
+  const slideIds = ids.split(",");
+
+  // Ordem exibida: durante o arraste, o slide arrastado já aparece no lugar de destino.
+  const shown = Array.from({ length: count }, (_, i) => i);
+  if (slideDrag) {
+    const [x] = shown.splice(slideDrag.from, 1);
+    shown.splice(slideDrag.to, 0, x);
+  }
+  const startDrag = (from: number, x: number, y: number, immediate = true) =>
+    grid.current && beginSlideDrag(preset.category, from, grid.current, x, y, immediate);
+
   return (
     <motion.section
       initial={{ opacity: 0, transform: "translateY(8px)" }}
       animate={{ opacity: 1, transform: "translateY(0px)" }}
       transition={{ duration: 0.26, delay: order * 0.05, ease: [0.23, 1, 0.32, 1] }}
-      className="space-y-3"
+      className="space-y-2"
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs tracking-wide">
@@ -298,24 +319,167 @@ function Section({ preset, order, first }: { preset: ExportPreset; order: number
           {size.w} × {size.h} px
         </span>
       </div>
-      <div className={cx("grid gap-4", feature ? "max-w-[920px] grid-cols-1" : "grid-cols-4")}>
-        {Array.from({ length: count }, (_, i) => (
-          <SlideTile key={i} preset={preset} slideIndex={i} />
+      <div ref={grid} className={cx("grid gap-x-4 gap-y-3", feature ? "max-w-[920px] grid-cols-1" : "grid-cols-4")}>
+        {shown.map((i, pos) => (
+          <motion.div
+            key={slideIds[i] ?? i}
+            layout={slideDrag ? "position" : false}
+            transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+            data-slide-pos={pos}
+            className={cx(
+              "min-w-0 transition-[opacity,scale] duration-150",
+              slideDrag?.from === i && "relative z-10 scale-[1.03] opacity-80",
+            )}
+          >
+            {!feature && <SlideBar category={preset.category} index={i} count={count} onDragStart={(x, y) => startDrag(i, x, y, false)} dragging={slideDrag?.from === i} />}
+            <SlideTile preset={preset} slideIndex={i} first={first} onHoldDrag={feature || count < 2 ? undefined : (k, x, y) => startDrag(k, x, y)} />
+          </motion.div>
         ))}
         {first && !feature && count < MAX_SLIDES && (
-          <button
-            type="button"
-            onClick={() => addSlide(preset.category)}
-            style={{ aspectRatio: `${size.w} / ${size.h}` }}
-            className="press flex flex-col items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-slate-300 text-xs font-semibold text-slate-400 hover:border-brand-400 hover:bg-brand-50/50 hover:text-brand-600"
-          >
-            <Plus className="size-5" />
-            Adicionar slide
-          </button>
+          <div className="min-w-0">
+            <div className="h-7" />
+            <button
+              type="button"
+              onClick={() => addSlide(preset.category)}
+              style={{ aspectRatio: `${size.w} / ${size.h}` }}
+              className="press flex w-full flex-col items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-slate-300 text-xs font-semibold text-slate-400 hover:border-brand-400 hover:bg-brand-50/50 hover:text-brand-600"
+            >
+              <Plus className="size-5" />
+              Adicionar slide
+            </button>
+          </div>
         )}
       </div>
     </motion.section>
   );
+}
+
+/** Cabeçalho de cada slide: alça para arrastar (mudar a ordem) e ações do slide. */
+function SlideBar({
+  category,
+  index,
+  count,
+  onDragStart,
+  dragging,
+}: {
+  category: Category;
+  index: number;
+  count: number;
+  onDragStart: (x: number, y: number) => void;
+  dragging: boolean;
+}) {
+  const selected = useApp((s) => s.slideIndex === index && !s.slideDrag);
+  const hasClip = useApp((s) => !!s.clip);
+  const api = useApp.getState();
+  return (
+    <div className="group/bar flex h-7 items-center gap-1">
+      <button
+        type="button"
+        title={count > 1 ? "Arraste para mudar a ordem (ou pressione e segure o slide)" : `Slide ${index + 1}`}
+        onPointerDown={(e) => {
+          if (e.button !== 0 || count < 2) return;
+          e.preventDefault();
+          onDragStart(e.clientX, e.clientY);
+        }}
+        onClick={() => api.selectSlide(index)}
+        className={cx(
+          "flex h-6 touch-none items-center gap-1 rounded-md pr-2 pl-1 text-[11px] font-semibold select-none",
+          count > 1 ? (dragging ? "cursor-grabbing" : "cursor-grab") : "cursor-default",
+          selected ? "bg-brand-50 text-brand-700" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800",
+        )}
+      >
+        <GripVertical className={cx("size-3.5", count > 1 ? "opacity-60" : "opacity-0")} />
+        Slide {index + 1}
+      </button>
+      <div
+        className={cx(
+          "ml-auto flex items-center transition-opacity duration-150",
+          selected ? "opacity-100" : "opacity-0 group-hover/bar:opacity-100 focus-within:opacity-100",
+        )}
+      >
+        {hasClip && <IconBtn icon={ClipboardPaste} label="Colar a camada copiada aqui (Ctrl+V)" onClick={() => api.pasteLayer(category, index)} />}
+        <IconBtn icon={Copy} label="Duplicar slide" disabled={count >= MAX_SLIDES} onClick={() => api.addSlide(category, index)} />
+        <IconBtn icon={Trash2} label="Excluir slide" danger disabled={count <= 1} onClick={() => api.removeSlide(category, index)} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Arrasta um slide para mudar a ordem. O destino sai da posição do ponteiro
+ * na grade (colunas fixas), não das caixas animadas — assim não "pula".
+ * Perto das bordas da área de rolagem, rola sozinho. Esc cancela.
+ */
+function beginSlideDrag(c: Category, from: number, grid: HTMLElement, x: number, y: number, immediate: boolean) {
+  const api = useApp.getState();
+  const n = getProject()?.design[c].slides.length ?? 0;
+  if (n < 2) return;
+  api.selectSlide(from);
+  // Pela alça, só vira arraste depois de mexer um pouco (um clique simples só seleciona).
+  let started = immediate;
+  if (started) api.setSlideDrag({ from, to: from });
+  const scroller = grid.closest("[data-scroll-area]") as HTMLElement | null;
+  const origin = { x, y };
+  let last = { x, y };
+  let raf = 0;
+
+  const target = () => {
+    const r = grid.getBoundingClientRect();
+    const cols = getComputedStyle(grid).gridTemplateColumns.split(" ").length || 1;
+    const cell = grid.querySelector<HTMLElement>("[data-slide-pos]");
+    const gapX = parseFloat(getComputedStyle(grid).columnGap) || 0;
+    const gapY = parseFloat(getComputedStyle(grid).rowGap) || 0;
+    const cw = (r.width - gapX * (cols - 1)) / cols;
+    const ch = cell?.offsetHeight ?? cw * 2;
+    const col = clamp(Math.floor((last.x - r.left) / (cw + gapX)), 0, cols - 1);
+    const row = Math.max(0, Math.floor((last.y - r.top) / (ch + gapY)));
+    return clamp(row * cols + col, 0, n - 1);
+  };
+  const update = () => {
+    const to = target();
+    if (useApp.getState().slideDrag?.to !== to) api.setSlideDrag({ from, to });
+  };
+  const tick = () => {
+    if (scroller && started) {
+      const r = scroller.getBoundingClientRect();
+      const edge = 70;
+      const v = last.y < r.top + edge ? -(r.top + edge - last.y) : last.y > r.bottom - edge ? last.y - (r.bottom - edge) : 0;
+      if (v) {
+        scroller.scrollTop += clamp(v * 0.35, -24, 24);
+        update();
+      }
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  const move = (e: PointerEvent) => {
+    last = { x: e.clientX, y: e.clientY };
+    if (!started && Math.hypot(last.x - origin.x, last.y - origin.y) > 4) {
+      started = true;
+      document.body.style.cursor = "grabbing";
+      api.setSlideDrag({ from, to: from });
+    }
+    if (started) update();
+  };
+  const end = (commit: boolean) => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancel);
+    window.removeEventListener("keydown", key);
+    document.body.style.removeProperty("cursor");
+    const d = useApp.getState().slideDrag;
+    api.setSlideDrag(null);
+    if (commit && d && d.to !== d.from) api.moveSlideTo(c, d.from, d.to);
+  };
+  const up = () => end(true);
+  const cancel = () => end(false);
+  const key = (e: KeyboardEvent) => e.key === "Escape" && end(false);
+  if (started) document.body.style.cursor = "grabbing";
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", cancel);
+  window.addEventListener("keydown", key);
+  raf = requestAnimationFrame(tick);
 }
 
 function EmptyCategory({ category }: { category: Category }) {

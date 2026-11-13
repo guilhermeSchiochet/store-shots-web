@@ -1,10 +1,11 @@
 "use client";
 import { AnimatePresence, motion } from "motion/react";
-import { Info, Monitor, Moon, RectangleHorizontal, Smartphone, Sun, Tablet } from "lucide-react";
-import { CATEGORY_LABEL, presetsOf, type Category } from "@/lib/models";
-import { cur, useApp, useProject, type Theme } from "@/store/app";
+import { FileDown, Images, Info, Monitor, Moon, Palette, RectangleHorizontal, Smartphone, Sun, Tablet } from "lucide-react";
+import { CATEGORY_LABEL, missingShots, presetsOf, type Category } from "@/lib/models";
+import { cur, useApp, useProject, type Panel, type Theme } from "@/store/app";
 import { cx, Segmented } from "../ui/controls";
 import { ExportCard } from "./ExportCard";
+import { LayerPanel, MultiPanel } from "./LayerProps";
 import { LayersCard } from "./LayersCard";
 import { PrintsCard } from "./ShotPanel";
 import { ProjectPicker } from "./ProjectPicker";
@@ -15,8 +16,9 @@ export const CATEGORY_ICON = { phone: Smartphone, tablet: Tablet, feature: Recta
 export const KIND_ICON = CATEGORY_ICON;
 
 /**
- * Barra lateral. Fixo no topo: marca, projeto, nome e categoria ativa (o
- * contexto de tudo abaixo). Rolável: modelo → slide → camadas → prints → exportação.
+ * Barra lateral. Fixo no topo: marca, projeto, nome, categoria ativa e as
+ * abas. Abaixo, uma aba por vez: Design (modelo, slide, camadas, fundo — ou a
+ * camada selecionada), Prints e Exportar.
  */
 export function Sidebar() {
   const hasProject = useApp((s) => !!s.currentId);
@@ -37,18 +39,12 @@ export function Sidebar() {
           <>
             <NameField />
             <CategoryScope />
+            <PanelTabs />
           </>
         )}
       </div>
       {hasProject ? (
-        <div className="thin-scroll flex-1 space-y-3 overflow-y-auto px-3 py-3">
-          <TemplateCard />
-          <SlideCard />
-          <LayersCard />
-          <PrintsCard />
-          <ExportCard />
-          <div className="h-2" />
-        </div>
+        <PanelBody />
       ) : (
         <p className="p-6 text-center text-xs leading-relaxed text-slate-500">
           Crie um projeto para começar. Cada projeto guarda os prints, as imagens e o design de um app.
@@ -144,6 +140,63 @@ function CategoryScope() {
           </motion.span>
         </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+function PanelTabs() {
+  const panel = useApp((s) => s.panel);
+  const setPanel = useApp((s) => s.setPanel);
+  const missing = useApp((s) => (cur(s) ? missingShots(cur(s)!, s.category).length : 0));
+  return (
+    <div className="mt-3">
+      <Segmented<Panel>
+        value={panel}
+        onChange={setPanel}
+        items={[
+          { value: "design", label: "Design", icon: Palette, title: "Modelo, slides, textos, imagens e fundo" },
+          { value: "prints", label: missing ? `Prints (${missing})` : "Prints", icon: Images, title: missing ? `Faltam ${missing} print(s)` : "Capturas do app e enquadramento" },
+          { value: "export", label: "Exportar", icon: FileDown, title: "Tamanhos e formato" },
+        ]}
+      />
+    </div>
+  );
+}
+
+function PanelBody() {
+  const panel = useApp((s) => s.panel);
+  const category = useApp((s) => s.category);
+  const slideIndex = useApp((s) => s.slideIndex);
+  const layer = useApp((s) => cur(s)?.design[s.category].slides[s.slideIndex]?.layers.find((l) => l.id === s.layerId));
+  const many = useApp((s) => s.layerIds.length > 1);
+  const key = panel === "design" ? (many ? "multi" : layer ? `layer-${layer.id}` : "slide") : panel;
+  return (
+    <div className="thin-scroll relative flex-1 overflow-y-auto px-3 py-3">
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={key}
+          initial={{ opacity: 0, transform: "translateY(6px)" }}
+          animate={{ opacity: 1, transform: "translateY(0px)" }}
+          exit={{ opacity: 0, transition: { duration: 0.08 } }}
+          transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
+          className="space-y-3 pb-2"
+        >
+          {panel === "design" &&
+            (many ? (
+              <MultiPanel />
+            ) : layer ? (
+              <LayerPanel layer={layer} category={category} slideIndex={slideIndex} />
+            ) : (
+              <>
+                <TemplateCard />
+                <LayersCard />
+                <SlideCard />
+              </>
+            ))}
+          {panel === "prints" && <PrintsCard />}
+          {panel === "export" && <ExportCard />}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

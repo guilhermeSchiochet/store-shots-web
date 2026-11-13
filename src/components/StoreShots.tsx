@@ -55,15 +55,30 @@ export function StoreShots() {
         s.redo();
         return;
       }
-      if (isTyping(e.target) || !s.layerId) return;
+      if (isTyping(e.target)) return;
       const c = s.category;
       const i = s.slideIndex;
-      if (e.key === "Delete" || e.key === "Backspace") {
+      const layers = getProject()?.design[c].slides[i]?.layers ?? [];
+      // A seleção pode ter camadas de vários slides.
+      const everywhere = getProject()?.design[c].slides.flatMap((sl) => sl.layers) ?? [];
+      if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
-        s.removeLayer(c, i, s.layerId);
+        s.selectLayers(layers.filter((l) => !l.hidden && !l.locked).map((l) => l.id), i);
+        return;
+      }
+      if (!s.layerId) return;
+      const ids = s.layerIds.length ? s.layerIds : [s.layerId];
+      const layer = layers.find((l) => l.id === s.layerId);
+      // Ctrl+C / Ctrl+X: tratados nos eventos "copy"/"cut" abaixo (escrevem na área de transferência do sistema).
+      if (e.key === "Enter" && layer?.type === "text" && ids.length === 1) {
+        e.preventDefault();
+        s.editText(layer.id);
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        s.removeLayers(c, i, ids);
       } else if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        s.duplicateLayer(c, i, s.layerId);
+        s.duplicateLayers(c, i, ids);
       } else if (e.key === "Escape") {
         s.selectLayer(null);
       } else if (e.key.startsWith("Arrow")) {
@@ -71,27 +86,68 @@ export function StoreShots() {
         const step = e.shiftKey ? 0.01 : 0.002;
         const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
-        s.updateLayer(c, i, s.layerId, (l) => (l.locked ? l : { ...l, x: l.x + dx, y: l.y + dy }));
+        const patches: Record<string, { x: number; y: number }> = {};
+        for (const l of everywhere) if (ids.includes(l.id) && !l.locked) patches[l.id] = { x: l.x + dx, y: l.y + dy };
+        s.patchLayers(c, i, patches);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Ctrl+V: imagem colada vai para o aparelho selecionado, a imagem selecionada ou o aparelho do slide.
+  /*
+   * Ctrl+C / Ctrl+X com camadas selecionadas: além de guardar as camadas, põe
+   * uma MARCA na área de transferência do sistema. Assim o Ctrl+V sabe que o
+   * último "copiar" foi aqui — uma captura de tela antiga no Windows não passa
+   * mais na frente das camadas copiadas.
+   */
+  useEffect(() => {
+    const onCopy = (e: ClipboardEvent, cut: boolean) => {
+      const s = useApp.getState();
+      if (isTyping(e.target) || !s.layerId || window.getSelection()?.toString()) return;
+      const ids = s.layerIds.length ? s.layerIds : [s.layerId];
+      const token = s.copyLayers(s.category, s.slideIndex, ids);
+      if (!token) return;
+      e.preventDefault();
+      e.clipboardData?.setData("text/plain", token);
+      if (cut) s.removeLayers(s.category, s.slideIndex, ids);
+    };
+    const copy = (e: ClipboardEvent) => onCopy(e, false);
+    const cut = (e: ClipboardEvent) => onCopy(e, true);
+    window.addEventListener("copy", copy);
+    window.addEventListener("cut", cut);
+    return () => {
+      window.removeEventListener("copy", copy);
+      window.removeEventListener("cut", cut);
+    };
+  }, []);
+
+  // Ctrl+V: camadas copiadas aqui, ou uma imagem vinda de fora.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if (isTyping(e.target)) return;
       const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
       const p = getProject();
-      if (!files.length || !p) return;
-      e.preventDefault();
+      if (!p) return;
       const s = useApp.getState();
-      const layer = p.design[s.category].slides[s.slideIndex]?.layers.find((l) => l.id === s.layerId);
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      // 1) A área de transferência tem a nossa marca (ou nada de fora): cola as camadas copiadas.
+      if (s.clip && (text === s.clipToken || (!files.length && !text))) {
+        e.preventDefault();
+        s.pasteLayer(s.category, s.slideIndex);
+        return;
+      }
+      if (!files.length) return;
+      // 2) Imagem de fora. Só troca algo que esteja SELECIONADO; senão entra como camada nova.
+      e.preventDefault();
+      const ids = s.layerIds.length ? s.layerIds : s.layerId ? [s.layerId] : [];
+      const layer = ids.length === 1 ? p.design[s.category].slides[s.slideIndex]?.layers.find((l) => l.id === ids[0]) : undefined;
       if (layer?.type === "device") void s.importShots(layer.shot.kind, layer.shot.index, files.slice(0, 1));
       else if (layer?.type === "image") void s.setLayerImage(s.category, s.slideIndex, layer.id, files[0]);
-      // Sem seleção: vira print do aparelho do slide (criando um, se não houver).
-      else void s.placePrints(s.category, files.slice(0, 1), { slide: s.slideIndex });
+      else {
+        void s.addImageLayer(s.category, s.slideIndex, files[0]);
+        s.toast("Imagem colada como camada. Para usar como print, selecione o aparelho antes de colar.");
+      }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);

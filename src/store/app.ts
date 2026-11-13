@@ -29,6 +29,7 @@ import {
 import { autoDevice, defaultDesign, templateById } from "@/lib/templates";
 
 export type Theme = "system" | "light" | "dark";
+export type Panel = "design" | "prints" | "export";
 
 export interface Toast {
   id: number;
@@ -47,14 +48,27 @@ interface AppState {
   currentId: string | null;
   category: Category;
   slideIndex: number;
+  /** Camada principal da seleção (a última clicada). */
   layerId: string | null;
+  /** Todas as camadas selecionadas no slide (inclui [layerId]). Shift/Ctrl + clique soma. */
+  layerIds: string[];
   shot: ShotRef;
   busy: Record<string, boolean>;
   progress: { done: number; total: number; label: string } | null;
   toasts: Toast[];
   theme: Theme;
-  /** Incrementa para pedir foco no campo de texto da camada selecionada. */
-  focusText: number;
+  /** Aba da barra lateral. */
+  panel: Panel;
+  /** Tamanho (preset) onde o usuário clicou por último: a barra flutuante aparece nele. */
+  tile: string | null;
+  /** Camada de texto sendo editada direto no slide. */
+  editingText: string | null;
+  /** Camadas copiadas (Ctrl+C) para colar em outro slide. */
+  clip: Layer[] | null;
+  /** Marca escrita na área de transferência do sistema ao copiar camadas (Ctrl+V sabe que é nossa). */
+  clipToken: string | null;
+  /** Slide sendo arrastado para mudar a ordem (de → para). */
+  slideDrag: { from: number; to: number } | null;
   canUndo: boolean;
   canRedo: boolean;
 
@@ -67,9 +81,14 @@ interface AppState {
 
   setCategory(c: Category): void;
   selectSlide(i: number): void;
-  selectLayer(id: string | null, slideIndex?: number): void;
+  /** [additive] (Shift/Ctrl): soma ou tira a camada da seleção atual. */
+  selectLayer(id: string | null, slideIndex?: number, additive?: boolean): void;
+  selectLayers(ids: string[], slideIndex?: number): void;
   selectShot(s: ShotRef): void;
-  requestTextFocus(): void;
+  setPanel(p: Panel): void;
+  setTile(id: string | null): void;
+  editText(id: string | null): void;
+  setSlideDrag(d: AppState["slideDrag"]): void;
 
   createProject(name: string): void;
   addProject(p: Project): void;
@@ -83,13 +102,26 @@ interface AppState {
   addSlide(c: Category, duplicateOf?: number): void;
   removeSlide(c: Category, i: number): void;
   moveSlide(c: Category, i: number, dir: -1 | 1): void;
+  moveSlideTo(c: Category, from: number, to: number): void;
   setBackground(c: Category, i: number, bg: Background, all?: boolean): void;
 
   updateLayer(c: Category, i: number, id: string, patch: Partial<Layer> | ((l: Layer) => Layer)): void;
   addLayer(c: Category, i: number, layer: Layer): void;
   removeLayer(c: Category, i: number, id: string): void;
+  removeLayers(c: Category, i: number, ids: string[]): void;
   duplicateLayer(c: Category, i: number, id: string): void;
+  duplicateLayers(c: Category, i: number, ids: string[]): void;
+  /** Vários ajustes (um por camada) num só passo de desfazer. */
+  patchLayers(c: Category, i: number, patches: Record<string, Partial<Layer>>): void;
   reorderLayer(c: Category, i: number, id: string, to: "up" | "down" | "top" | "bottom"): void;
+  /** Nova ordem de desenho (ids do fundo para o topo). */
+  setLayerOrder(c: Category, i: number, ids: string[]): void;
+  /** Copia as camadas (de qualquer slide); devolve a marca para pôr na área de transferência. */
+  copyLayers(c: Category, i: number, ids: string[]): string | null;
+  /** Cola as camadas copiadas no slide [i] (no mesmo lugar; deslocadas se já houver igual ali). */
+  pasteLayer(c: Category, i: number): void;
+  /** Coloca cópias das camadas em todos os outros slides, no mesmo lugar (sem repetir o que já está lá). */
+  copyLayersToAll(c: Category, i: number, ids: string[]): void;
   setLayerImage(c: Category, i: number, id: string, file: File | string | null): Promise<void>;
   addImageLayer(c: Category, i: number, file: File, at?: { x: number; y: number }): Promise<void>;
 
@@ -167,6 +199,18 @@ const read = (k: string) => {
 
 let toastSeq = 0;
 
+/** Prefixo da marca na área de transferência: "isto são camadas do Store Shots". */
+export const CLIP_PREFIX = "store-shots:camadas:";
+
+/** Mesma camada no mesmo lugar (para não empilhar cópias iguais). */
+const sameSpot = (a: Layer, b: Layer) => {
+  if (a.type !== b.type || Math.abs(a.x - b.x) > 1e-4 || Math.abs(a.y - b.y) > 1e-4 || Math.abs(a.w - b.w) > 1e-4) return false;
+  if ((a.type === "image" || a.type === "badge") && (b.type === "image" || b.type === "badge")) return a.imageId === b.imageId;
+  if (a.type === "text" && b.type === "text") return a.text === b.text;
+  if (a.type === "device" && b.type === "device") return a.shot.index === b.shot.index;
+  return true;
+};
+
 const aspectOf = (id: string | null) => {
   const s = imageBank.size(id);
   return s ? s.w / s.h : null;
@@ -209,8 +253,10 @@ export const useApp = create<AppState>()((set, get) => {
     const s = get();
     const slides = next.design[s.category].slides;
     const slideIndex = clamp(s.slideIndex, 0, Math.max(0, slides.length - 1));
-    const layerId = slides[slideIndex]?.layers.some((l) => l.id === s.layerId) ? s.layerId : null;
-    set({ slideIndex, layerId });
+    const exists = (id: string | null) => !!id && slides.some((sl) => sl.layers.some((l) => l.id === id));
+    const layerIds = s.layerIds.filter(exists);
+    const layerId = exists(s.layerId) ? s.layerId : (layerIds[layerIds.length - 1] ?? null);
+    set({ slideIndex, layerId, layerIds, editingText: layerId === s.editingText ? s.editingText : null });
     syncHistoryFlags();
   };
 
@@ -240,12 +286,18 @@ export const useApp = create<AppState>()((set, get) => {
     category: "phone",
     slideIndex: 0,
     layerId: null,
+    layerIds: [],
     shot: { kind: "phone", index: 0 },
     busy: {},
     progress: null,
     toasts: [],
     theme: "system",
-    focusText: 0,
+    panel: (read("store-shots:panel") as Panel) || "design",
+    tile: null,
+    editingText: null,
+    clip: null,
+    clipToken: null,
+    slideDrag: null,
     canUndo: false,
     canRedo: false,
 
@@ -290,29 +342,52 @@ export const useApp = create<AppState>()((set, get) => {
     setProgress: (progress) => set({ progress }),
 
     setCategory: (category) =>
-      set({ category, slideIndex: 0, layerId: null, shot: { kind: category === "tablet" ? "tablet" : "phone", index: 0 } }),
-    selectSlide: (slideIndex) => set({ slideIndex, layerId: null }),
-    selectLayer: (layerId, slideIndex) => {
+      set({ category, slideIndex: 0, layerId: null, layerIds: [], editingText: null, tile: null, shot: { kind: category === "tablet" ? "tablet" : "phone", index: 0 } }),
+    selectSlide: (slideIndex) => set({ slideIndex, layerId: null, layerIds: [], editingText: null }),
+    selectLayers: (ids, slideIndex) => {
+      const idx = slideIndex ?? get().slideIndex;
+      set({ slideIndex: idx, layerIds: ids, layerId: ids[ids.length - 1] ?? null, editingText: null });
+    },
+    selectLayer: (id, slideIndex, additive) => {
       const s = get();
       const idx = slideIndex ?? s.slideIndex;
+      let layerId = id;
+      let layerIds = id ? [id] : [];
+      if (additive && id) {
+        const has = s.layerIds.includes(id);
+        layerIds = has ? s.layerIds.filter((x) => x !== id) : [...s.layerIds, id];
+        layerId = has ? (layerIds[layerIds.length - 1] ?? null) : id;
+      }
       const layer = current()?.design[s.category].slides[idx]?.layers.find((l) => l.id === layerId);
-      set({ layerId, slideIndex: idx, ...(layer?.type === "device" ? { shot: { ...layer.shot } } : {}) });
+      set({
+        layerId,
+        layerIds,
+        slideIndex: idx,
+        ...(s.editingText && (s.editingText !== layerId || layerIds.length > 1) ? { editingText: null } : {}),
+        ...(layer?.type === "device" ? { shot: { ...layer.shot } } : {}),
+      });
     },
     selectShot: (shot) => set({ shot }),
-    requestTextFocus: () => set({ focusText: get().focusText + 1 }),
+    setPanel: (panel) => {
+      store("store-shots:panel", panel);
+      set({ panel });
+    },
+    setTile: (tile) => get().tile !== tile && set({ tile }),
+    editText: (editingText) => set({ editingText }),
+    setSlideDrag: (slideDrag) => set({ slideDrag }),
 
     createProject(name) {
       get().addProject(emptyProject(name, { phone: defaultDesign("phone"), tablet: defaultDesign("tablet"), feature: defaultDesign("feature") }));
     },
     addProject(p) {
-      set({ projects: [p, ...get().projects], currentId: p.id, slideIndex: 0, layerId: null });
+      set({ projects: [p, ...get().projects], currentId: p.id, slideIndex: 0, layerId: null, layerIds: [] });
       scheduleSave(p.id, true);
       store("store-shots:last", p.id);
       syncHistoryFlags();
     },
     selectProject(id) {
       void flushSaves();
-      set({ currentId: id, slideIndex: 0, layerId: null });
+      set({ currentId: id, slideIndex: 0, layerId: null, layerIds: [], editingText: null });
       store("store-shots:last", id);
       syncHistoryFlags();
     },
@@ -320,7 +395,7 @@ export const useApp = create<AppState>()((set, get) => {
       const p = get().projects.find((x) => x.id === id);
       if (!p) return;
       const rest = get().projects.filter((x) => x.id !== id);
-      set({ projects: rest, currentId: get().currentId === id ? (rest[0]?.id ?? null) : get().currentId, layerId: null, slideIndex: 0 });
+      set({ projects: rest, currentId: get().currentId === id ? (rest[0]?.id ?? null) : get().currentId, layerId: null, layerIds: [], slideIndex: 0 });
       dirty.delete(id);
       histories.delete(id);
       await db.deleteProject(id);
@@ -352,7 +427,7 @@ export const useApp = create<AppState>()((set, get) => {
       const t = templateById(id);
       if (!t) return;
       mutate((p) => ({ ...p, design: { ...p.design, [c]: t.build(c) } }), { checkpoint: true, now: true });
-      set({ slideIndex: 0, layerId: null });
+      set({ slideIndex: 0, layerId: null, layerIds: [] });
     },
     addSlide(c, duplicateOf) {
       const p = current();
@@ -366,13 +441,13 @@ export const useApp = create<AppState>()((set, get) => {
         : { id: `s_${Date.now()}`, bg: { type: "gradient", a: "#ffffff", b: "#e6ecf5", angle: 180 }, layers: [] };
       const at = duplicateOf !== undefined ? duplicateOf + 1 : slides.length;
       mutate((pp) => withSlides(pp, c, (s) => [...s.slice(0, at), fresh, ...s.slice(at)]), { checkpoint: true });
-      set({ slideIndex: at, layerId: null });
+      set({ slideIndex: at, layerId: null, layerIds: [] });
     },
     removeSlide(c, i) {
       const p = current();
       if (!p || p.design[c].slides.length <= 1) return;
       mutate((pp) => withSlides(pp, c, (s) => s.filter((_, k) => k !== i)), { checkpoint: true });
-      set({ slideIndex: Math.max(0, i - 1), layerId: null });
+      set({ slideIndex: Math.max(0, i - 1), layerId: null, layerIds: [] });
     },
     moveSlide(c, i, dir) {
       const p = current();
@@ -388,6 +463,22 @@ export const useApp = create<AppState>()((set, get) => {
         { checkpoint: true },
       );
       set({ slideIndex: j });
+    },
+    moveSlideTo(c, from, to) {
+      const p = current();
+      const n = p?.design[c].slides.length ?? 0;
+      if (!p || from === to || from < 0 || to < 0 || from >= n || to >= n) return;
+      mutate(
+        (pp) =>
+          withSlides(pp, c, (s) => {
+            const a = [...s];
+            const [x] = a.splice(from, 1);
+            a.splice(to, 0, x);
+            return a;
+          }),
+        { checkpoint: true },
+      );
+      set({ slideIndex: to });
     },
     setBackground(c, i, bg, all) {
       mutate((p) => withSlides(p, c, (s) => s.map((sl, k) => (all || k === i ? { ...sl, bg: { ...bg } } : sl))), {
@@ -406,16 +497,46 @@ export const useApp = create<AppState>()((set, get) => {
       mutate((p) => withLayers(p, c, i, (ls) => [...ls, layer]), { checkpoint: true });
       get().selectLayer(layer.id, i);
     },
-    removeLayer(c, i, id) {
-      mutate((p) => withLayers(p, c, i, (ls) => ls.filter((l) => l.id !== id)), { checkpoint: true });
-      if (get().layerId === id) set({ layerId: null });
+    removeLayer: (c, i, id) => get().removeLayers(c, i, [id]),
+    // As ações de grupo valem para camadas de QUALQUER slide da categoria (seleção entre slides).
+    removeLayers(c, _i, ids) {
+      const gone = new Set(ids);
+      mutate((p) => withSlides(p, c, (ss) => ss.map((sl) => (sl.layers.some((l) => gone.has(l.id)) ? { ...sl, layers: sl.layers.filter((l) => !gone.has(l.id)) } : sl))), {
+        checkpoint: true,
+      });
+      const s = get();
+      const layerIds = s.layerIds.filter((x) => !gone.has(x));
+      set({
+        layerIds,
+        layerId: s.layerId && gone.has(s.layerId) ? (layerIds[layerIds.length - 1] ?? null) : s.layerId,
+        editingText: s.editingText && gone.has(s.editingText) ? null : s.editingText,
+      });
     },
-    duplicateLayer(c, i, id) {
-      const l = current()?.design[c].slides[i]?.layers.find((x) => x.id === id);
-      if (!l) return;
-      const copy = cloneLayer(l);
-      mutate((p) => withLayers(p, c, i, (ls) => [...ls, copy]), { checkpoint: true });
-      set({ layerId: copy.id });
+    duplicateLayer: (c, i, id) => get().duplicateLayers(c, i, [id]),
+    duplicateLayers(c, _i, ids) {
+      const p = current();
+      if (!p) return;
+      // Cada cópia fica no slide do original, mantendo a ordem de desenho entre elas.
+      const made: string[] = [];
+      const slides = p.design[c].slides.map((sl) => {
+        const copies = sl.layers.filter((l) => ids.includes(l.id)).map((l) => cloneLayer(l));
+        made.push(...copies.map((l) => l.id));
+        return copies.length ? { ...sl, layers: [...sl.layers, ...copies] } : sl;
+      });
+      if (!made.length) return;
+      mutate((pp) => withSlides(pp, c, () => slides), { checkpoint: true });
+      set({ layerIds: made, layerId: made[made.length - 1] });
+    },
+    patchLayers(c, _i, patches) {
+      mutate((p) =>
+        withSlides(p, c, (ss) =>
+          ss.map((sl) =>
+            sl.layers.some((l) => patches[l.id])
+              ? { ...sl, layers: sl.layers.map((l) => (patches[l.id] ? ({ ...l, ...patches[l.id] } as Layer) : l)) }
+              : sl,
+          ),
+        ),
+      );
     },
     reorderLayer(c, i, id, to) {
       mutate(
@@ -431,6 +552,66 @@ export const useApp = create<AppState>()((set, get) => {
           }),
         { checkpoint: true },
       );
+    },
+    setLayerOrder(c, i, ids) {
+      mutate((p) =>
+        withLayers(p, c, i, (ls) => {
+          const byId = new Map(ls.map((l) => [l.id, l]));
+          const next = ids.map((id) => byId.get(id)).filter((l): l is Layer => !!l);
+          return next.length === ls.length ? next : ls;
+        }),
+      );
+    },
+    copyLayers(c, _i, ids) {
+      const found = (current()?.design[c].slides ?? []).flatMap((sl) => sl.layers.filter((x) => ids.includes(x.id)));
+      // A mesma logo selecionada em vários slides vira UMA cópia.
+      const ls = found.filter((l, k) => !found.slice(0, k).some((o) => sameSpot(o, l)));
+      if (!ls.length) return null;
+      const token = `${CLIP_PREFIX}${Date.now().toString(36)}`;
+      set({ clip: structuredClone(ls), clipToken: token });
+      get().toast(
+        `${ls.length > 1 ? `${ls.length} camadas copiadas` : "Camada copiada"}. Clique em outro slide e use Ctrl+V para colar.`,
+      );
+      return token;
+    },
+    pasteLayer(c, i) {
+      const src = get().clip;
+      const slide = current()?.design[c].slides[i];
+      if (!src?.length || !slide) return;
+      // Se já existe igual no lugar (ex.: colando no mesmo slide), desloca um pouco para não sumir atrás do original.
+      const shift = src.some((a) => slide.layers.some((b) => sameSpot(a, b))) ? 0.03 : 0;
+      const copies = src.map((l) => ({ ...cloneLayer(l, shift, shift), name: l.name }));
+      mutate((p) => withLayers(p, c, i, (ls) => [...ls, ...copies]), { checkpoint: true, now: true });
+      set({ layerIds: copies.map((l) => l.id), layerId: copies[copies.length - 1].id, slideIndex: i, editingText: null });
+    },
+    copyLayersToAll(c, _i, ids) {
+      const p = current();
+      if (!p || p.design[c].slides.length <= 1) return;
+      // Guarda a posição na pilha de cada original: a cópia entra na mesma altura (atrás do aparelho, se lá estava atrás).
+      const src = p.design[c].slides.flatMap((sl) => sl.layers.map((l, z) => ({ l, z })).filter(({ l }) => ids.includes(l.id)));
+      if (!src.length) return;
+      let added = 0;
+      let touched = 0;
+      const slides = p.design[c].slides.map((sl) => {
+        const layers = [...sl.layers];
+        let n = 0;
+        // Compara com a lista que vai crescendo: a mesma camada vinda de dois slides entra uma vez só.
+        for (const { l, z } of src) {
+          if (layers.some((b) => sameSpot(l, b))) continue;
+          layers.splice(Math.min(z, layers.length), 0, { ...cloneLayer(l, 0, 0), name: l.name });
+          n++;
+        }
+        if (!n) return sl;
+        added += n;
+        touched++;
+        return { ...sl, layers };
+      });
+      if (!added) {
+        get().toast("Os outros slides já têm isso no mesmo lugar.");
+        return;
+      }
+      mutate((pp) => withSlides(pp, c, () => slides), { checkpoint: true, now: true });
+      get().toast(`Colocado em ${touched} slide${touched > 1 ? "s" : ""}. Ctrl+Z desfaz.`);
     },
     async setLayerImage(c, i, id, file) {
       let imageId: string | null = typeof file === "string" ? file : null;

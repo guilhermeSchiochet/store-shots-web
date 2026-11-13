@@ -2,6 +2,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { X, type LucideIcon } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cx } from "./controls";
 
 /** Diálogo no estilo da referência HTML: cabeçalho com ícone, corpo e rodapé. */
@@ -33,7 +34,9 @@ export function Modal({
     return () => window.removeEventListener("keydown", esc);
   }, [open, onClose]);
 
-  return (
+  // Portal no <body>: um ancestral com transform (animações da barra lateral) prenderia o `fixed`.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -82,6 +85,7 @@ export function Modal({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

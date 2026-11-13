@@ -99,3 +99,25 @@ export function Reveal({ show, children }: { show: boolean; children: ReactNode 
     </AnimatePresence>
   );
 }
+
+/** Seção recolhível dentro de um painel ("Mais ajustes"): fechada por padrão para não poluir. */
+export function Disclosure({ title, children, defaultOpen = false }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded py-1 text-left text-[10px] font-semibold tracking-wider text-slate-400 uppercase hover:text-slate-600"
+      >
+        {title}
+        <ChevronDown
+          className="size-3.5 transition-transform duration-200 ease-[var(--ease-out)]"
+          style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}
+        />
+      </button>
+      <Reveal show={open}>{children}</Reveal>
+    </div>
+  );
+}
