@@ -234,7 +234,39 @@ export function renderSlide(ctx: Ctx, env: RenderEnv, slide: Slide, scratch: Off
   ctx.restore();
 }
 
+/** Mesma cor, transparente (degradê para "nada" sem escurecer no meio). */
+export function clearOf(hex: string) {
+  let h = hex.replace("#", "");
+  if (h.length === 3 || h.length === 4) h = [...h].map((x) => x + x).join("");
+  const n = parseInt(h.slice(0, 6), 16) || 0;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0)`;
+}
+
 function drawBackground(ctx: Ctx, s: Slide, W: number, H: number) {
+  const bg = s.bg;
+  if (bg.type === "radial") {
+    const g = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.35, Math.hypot(W, H) * 0.62);
+    g.addColorStop(0, bg.a);
+    g.addColorStop(1, bg.b);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  if (bg.type === "aurora") {
+    ctx.fillStyle = bg.a;
+    ctx.fillRect(0, 0, W, H);
+    const R = Math.max(W, H) * 0.75;
+    const blob = (x: number, y: number, color: string) => {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+      g.addColorStop(0, color);
+      g.addColorStop(1, clearOf(color));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    };
+    blob(W * 0.1, H * 0.08, bg.b);
+    blob(W * 0.95, H * 0.9, bg.c ?? bg.b);
+    return;
+  }
   if (s.bg.type === "solid") ctx.fillStyle = s.bg.a;
   else {
     const a = ((s.bg.angle - 90) * Math.PI) / 180;

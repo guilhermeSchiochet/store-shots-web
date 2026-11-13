@@ -286,9 +286,16 @@ export const LAYER_TYPE_LABEL: Record<LayerType, string> = {
 };
 
 export interface Background {
-  type: "solid" | "gradient";
+  /**
+   * solid = cor [a]; gradient = linear de [a] para [b] no [angle];
+   * radial = luz [a] no alto/centro espalhando até [b];
+   * aurora = base [a] com duas manchas suaves de cor ([b] no alto à esquerda, [c] embaixo à direita).
+   */
+  type: "solid" | "gradient" | "radial" | "aurora";
   a: string;
   b: string;
+  /** Terceira cor (só no aurora). */
+  c?: string;
   angle: number; // graus, 180 = de cima para baixo
 }
 
@@ -495,9 +502,10 @@ function normalizeSlide(raw: Partial<Slide>): Slide {
   return {
     id: str(raw.id, uid("s")),
     bg: {
-      type: bg.type === "solid" ? "solid" : "gradient",
+      type: bg.type === "solid" || bg.type === "radial" || bg.type === "aurora" ? bg.type : "gradient",
       a: str(bg.a, "#ffffff"),
       b: str(bg.b, "#e6ecf5"),
+      ...(typeof bg.c === "string" ? { c: bg.c } : {}),
       angle: num(bg.angle, 180),
     },
     layers: (Array.isArray(raw.layers) ? raw.layers : []).map(normalizeLayer).filter((l): l is Layer => !!l),
